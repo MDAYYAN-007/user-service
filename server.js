@@ -1,18 +1,13 @@
 const express = require("express");
-const app = express();
+const validator = require("validator");
 
+const app = express();
 app.use(express.json());
 
 let users = [];
 let nextId = 1;
 
-// better email regex
-function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-// helper error response
+// helper error function
 function sendError(res, status, message, details = null) {
   const error = { error: message };
   if (details) error.details = details;
@@ -21,24 +16,23 @@ function sendError(res, status, message, details = null) {
 
 // POST /users
 app.post("/users", (req, res) => {
-  const body = req.body;
-
-  // empty payload
-  if (!body || Object.keys(body).length === 0) {
-    return sendError(res, 400, "Request body cannot be empty");
-  }
-
-  const { name, email } = body;
+  const { name, email } = req.body || {};
   const details = {};
 
+  // validation
   if (!name) details.name = "Name is required";
-  if (!email) details.email = "Email is required";
-  else if (!isValidEmail(email)) details.email = "Invalid email format";
+
+  if (!email) {
+    details.email = "Email is required";
+  } else if (!validator.isEmail(email)) {
+    details.email = "Invalid email format";
+  }
 
   if (Object.keys(details).length > 0) {
     return sendError(res, 400, "Validation failed", details);
   }
 
+  // duplicate email check
   const duplicate = users.find((u) => u.email === email);
   if (duplicate) {
     return sendError(res, 409, "Email already exists", {
@@ -54,7 +48,7 @@ app.post("/users", (req, res) => {
 
   users.push(newUser);
 
-  res.status(201).json(newUser);
+  return res.status(201).json(newUser);
 });
 
 // GET /users/:id
@@ -73,7 +67,7 @@ app.get("/users/:id", (req, res) => {
     return sendError(res, 404, "User not found");
   }
 
-  res.status(200).json(user);
+  res.json(user);
 });
 
 app.listen(3000, () => {
