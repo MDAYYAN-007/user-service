@@ -7,7 +7,6 @@ app.use(express.json());
 let users = [];
 let nextId = 1;
 
-// helper error function
 function sendError(res, status, message, details = null) {
   const error = { error: message };
   if (details) error.details = details;
@@ -16,10 +15,16 @@ function sendError(res, status, message, details = null) {
 
 // POST /users
 app.post("/users", (req, res) => {
-  const { name, email } = req.body || {};
+  const body = req.body;
+
+  // empty payload
+  if (!body || Object.keys(body).length === 0) {
+    return sendError(res, 400, "Request body cannot be empty");
+  }
+
+  const { name, email } = body;
   const details = {};
 
-  // validation
   if (!name) details.name = "Name is required";
 
   if (!email) {
@@ -32,34 +37,29 @@ app.post("/users", (req, res) => {
     return sendError(res, 400, "Validation failed", details);
   }
 
-  // duplicate email check
   const duplicate = users.find((u) => u.email === email);
   if (duplicate) {
-    return sendError(res, 409, "Email already exists", {
+    return sendError(res, 400, "Email already exists", {
       email: "Duplicate email",
     });
   }
 
   const newUser = {
-    id: nextId++,
+    id: nextId.toString(), // explicit generated id
     name,
     email,
   };
 
+  nextId++;
   users.push(newUser);
 
+  // return created user including id
   return res.status(201).json(newUser);
 });
 
 // GET /users/:id
 app.get("/users/:id", (req, res) => {
-  const id = Number(req.params.id);
-
-  if (isNaN(id)) {
-    return sendError(res, 400, "Invalid user id", {
-      id: "Must be a number",
-    });
-  }
+  const id = req.params.id;
 
   const user = users.find((u) => u.id === id);
 
