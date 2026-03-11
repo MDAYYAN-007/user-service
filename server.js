@@ -1,115 +1,86 @@
 const express = require("express");
-const validator = require("validator");
-
+const jwt = require("jsonwebtoken"); // 1. Import JWT
 const app = express();
 
-/* ---------- Middleware ---------- */
-
-// Handle invalid JSON bodies
 app.use(express.json());
-app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    return res.status(400).json({
-      error: "Invalid JSON in request body",
-    });
-  }
-  next();
-});
 
-/* ---------- In-memory storage ---------- */
+// Secret key for signing tokens (In production, use an environment variable!)
+const JWT_SECRET = "your_super_secret_key_123";
 
-const users = new Map();        // id -> user
-const emailIndex = new Map();   // email -> id
+let users = [];
 let nextId = 1;
 
-/* ---------- Helper ---------- */
-
-function sendError(res, status, message, details = null) {
-  const payload = { error: message };
-  if (details) payload.details = details;
-  return res.status(status).json(payload);
+// --- Helper Functions ---
+function isValidEmail(email) {
+  return /\S+@\S+\.\S+/.test(email);
 }
 
-/* ---------- POST /users ---------- */
+// 2. JWT Validation Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
 
+  if (!token) {
+    return res.status(401).json({ error: "Access denied. No token provided." });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
+    if (err) {
+      // 03. Consistent error handling for expired/invalid tokens
+      const message = err.name === 'TokenExpiredError' ? "Token expired" : "Invalid token";
+      return res.status(403).json({ error: message });
+    }
+    
+    // Attach the user info to the request object
+    req.user = decodedUser;
+    next(); 
+  });
+};
+
+// --- Routes ---
+
+// POST /users (Public - for registration)
 app.post("/users", (req, res) => {
-  const body = req.body;
+  const { name, email } = req.body;
 
-  // Empty body check
-  if (!body || typeof body !== "object" || Object.keys(body).length === 0) {
-    return sendError(res, 400, "Request body cannot be empty");
+  if (!name || !email) {
+    return res.status(400).json({ error: "Name and email are required" });
   }
 
-  const { name, email } = body;
-  const details = {};
-
-  if (!name || typeof name !== "string" || !name.trim()) {
-    details.name = "Name is required and must be a non-empty string";
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "Invalid email format" });
   }
 
-  if (!email || typeof email !== "string") {
-    details.email = "Email is required";
-  } else if (!validator.isEmail(email)) {
-    details.email = "Email must be a valid email address";
+  const existingUser = users.find((u) => u.email === email);
+  if (existingUser) {
+    return res.status(409).json({ error: "Email already exists" });
   }
 
-  if (Object.keys(details).length > 0) {
-    return sendError(res, 400, "Validation failed", details);
-  }
+  const newUser = { id: nextId++, name, email };
+  users.push(newUser);
 
-  const normalizedEmail = email.toLowerCase();
+  // Generate a token so the user can actually use the API after signing up
+  const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '1h' });
 
-  if (emailIndex.has(normalizedEmail)) {
-    return sendError(res, 400, "Email must be unique", {
-      email: "A user with this email already exists",
-    });
-  }
-
-  const id = String(nextId++);
-
-  const user = {
-    id,
-    name: name.trim(),
-    email: normalizedEmail,
-  };
-
-  users.set(id, user);
-  emailIndex.set(normalizedEmail, id);
-
-  return res.status(201).json(user);
+  return res.status(201).json({ user: newUser, token });
 });
 
-/* ---------- GET /users/:id ---------- */
+// 02. GET /users/:id (Protected - Enforces authentication)
+app.get("/users/:id", authenticateToken, (req, res) => {
+  const id = Number(req.params.id);
 
-app.get("/users/:id", (req, res) => {
-  const { id } = req.params;
-
-  if (!id || typeof id !== "string") {
-    return sendError(res, 400, "Invalid user id", {
-      id: "User id must be provided",
-    });
+  if (isNaN(id)) {
+    return res.status(400).json({ error: "Invalid user id" });
   }
 
-  const user = users.get(id);
+  const user = users.find((u) => u.id === id);
 
   if (!user) {
-    return sendError(res, 404, "User not found", {
-      id: "No user exists with the provided id",
-    });
+    return res.status(404).json({ error: "User not found" });
   }
 
-  return res.status(200).json(user);
+  res.status(200).json(user);
 });
-
-/* ---------- Fallback Routes ---------- */
-
-app.use((req, res) => {
-  res.status(404).json({
-    error: "Endpoint not found",
-  });
-});
-
-/* ---------- Start Server ---------- */
 
 app.listen(3000, () => {
   console.log("Server running on port 3000");
