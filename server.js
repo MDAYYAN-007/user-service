@@ -1,37 +1,31 @@
 const express = require("express");
-const jwt = require("jsonwebtoken"); // 1. Import JWT
+const jwt = require("jsonwebtoken");
 const app = express();
 
 app.use(express.json());
 
-// Secret key for signing tokens (In production, use an environment variable!)
-const JWT_SECRET = "your_super_secret_key_123";
+const JWT_SECRET = "your_super_secret_key_2026";
 
 let users = [];
 let nextId = 1;
 
-// --- Helper Functions ---
-function isValidEmail(email) {
-  return /\S+@\S+\.\S+/.test(email);
-}
+// --- Middleware ---
 
-// 2. JWT Validation Middleware
+// 01. Consistent JWT Validation & 401 Error Handling
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
+  const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ error: "Access denied. No token provided." });
+    return res.status(401).json({ error: "No token provided" });
   }
 
   jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
     if (err) {
-      // 03. Consistent error handling for expired/invalid tokens
-      const message = err.name === 'TokenExpiredError' ? "Token expired" : "Invalid token";
-      return res.status(403).json({ error: message });
+      // Requirements specify a consistent 401 for invalid/expired tokens
+      return res.status(401).json({ error: "Invalid or expired token" });
     }
-    
-    // Attach the user info to the request object
+
     req.user = decodedUser;
     next(); 
   });
@@ -39,42 +33,32 @@ const authenticateToken = (req, res, next) => {
 
 // --- Routes ---
 
-// POST /users (Public - for registration)
+// POST /users (Registration)
 app.post("/users", (req, res) => {
   const { name, email } = req.body;
 
-  if (!name || !email) {
-    return res.status(400).json({ error: "Name and email are required" });
-  }
-
-  if (!isValidEmail(email)) {
-    return res.status(400).json({ error: "Invalid email format" });
-  }
+  if (!name || !email) return res.status(400).json({ error: "Name and email required" });
 
   const existingUser = users.find((u) => u.email === email);
-  if (existingUser) {
-    return res.status(409).json({ error: "Email already exists" });
-  }
+  if (existingUser) return res.status(409).json({ error: "Email already exists" });
 
   const newUser = { id: nextId++, name, email };
   users.push(newUser);
 
-  // Generate a token so the user can actually use the API after signing up
-  const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '1h' });
-
+  const token = jwt.sign({ id: newUser.id }, JWT_SECRET, { expiresIn: '1h' });
   return res.status(201).json({ user: newUser, token });
 });
 
-// 02. GET /users/:id (Protected - Enforces authentication)
+// 02. GET /users/:id (Protected with Ownership Check)
 app.get("/users/:id", authenticateToken, (req, res) => {
-  const id = Number(req.params.id);
+  const requestedId = Number(req.params.id);
 
-  if (isNaN(id)) {
-    return res.status(400).json({ error: "Invalid user id" });
+  // Requirement: Ensure the userId from token matches the :id parameter
+  if (req.user.id !== requestedId) {
+    return res.status(403).json({ error: "Forbidden: You cannot access other users' data" });
   }
 
-  const user = users.find((u) => u.id === id);
-
+  const user = users.find((u) => u.id === requestedId);
   if (!user) {
     return res.status(404).json({ error: "User not found" });
   }
